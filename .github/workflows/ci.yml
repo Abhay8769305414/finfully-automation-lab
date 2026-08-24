@@ -1,0 +1,142 @@
+name: CI Workflow
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Unit & PostgreSQL Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: finfully
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_secret_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d finfully"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint & Static Code Checks
+        run: |
+          python -m py_compile $(find src/ -name "*.py")
+          python -m py_compile $(find scripts/ -name "*.py")
+
+      - name: Run Standard Unit Tests (Offline / SQLite)
+        run: |
+          pytest tests/ -v
+
+      - name: Run Alembic Migrations on CI PostgreSQL
+        env:
+          DATABASE_BACKEND: postgres
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres_secret_password
+          PGDATABASE: finfully
+          DATABASE_URL: postgresql://postgres:postgres_secret_password@localhost:5432/finfully
+        run: |
+          alembic upgrade head
+
+      - name: Run PostgreSQL Integration Tests
+        env:
+          DATABASE_BACKEND: postgres
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres_secret_password
+          PGDATABASE: finfully
+          DATABASE_URL: postgresql://postgres:postgres_secret_password@localhost:5432/finfully
+        run: |
+          pytest tests/test_postgres/ -v
+
+      - name: Upload Test Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-failure-logs
+          path: |
+            .pytest_cache
+            reports/
+
+  docker-integration:
+    name: Docker Compose Build & Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Docker Compose Services
+        run: |
+          docker compose build
+
+      - name: Launch Docker Compose Services
+        run: |
+          docker compose up -d
+
+      - name: Wait for API Service Health & Readiness
+        run: |
+          python -c "import time, httpx; [time.sleep(2) or exit(0) if getattr(httpx.get('http://localhost:8000/ready', timeout=2.0), 'status_code', None) == 200 else None for _ in range(30)]; print('[FAIL] API service readiness timeout'); exit(1)"
+
+      - name: Run Docker Integration Tests
+        run: |
+          pytest tests/test_docker/ -v
+
+      - name: Run End-to-End Execution Script
+        run: |
+          python scripts/check_docker_e2e.py
+
+      - name: Capture Container Logs & Status
+        if: always()
+        run: |
+          docker compose ps
+          docker compose logs --no-color > docker-compose-ci.log
+
+      - name: Upload Docker Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-logs
+          path: docker-compose-ci.log
+
+      - name: Teardown Docker Compose Services
+        if: always()
+        run: |
+          docker compose down -v
