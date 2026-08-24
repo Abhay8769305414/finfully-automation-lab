@@ -1,0 +1,175 @@
+{
+  "name": "Daily Invoice Reconciliation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger (24h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/process",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"file_path\": \"data/sales.csv\",\n  \"execution_id\": \"N8N-DAILY-{{ $now.format('yyyyMMdd-HHmmss') }}\",\n  \"source\": \"n8n_cron_daily\",\n  \"requested_by\": \"n8n_scheduler\"\n}",
+        "options": {}
+      },
+      "name": "Trigger FastAPI /process (HTTP 202)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "name": "Wait 2s for Celery Task",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://api:8000/status/{{ $json.execution_id }}",
+        "options": {}
+      },
+      "name": "Poll GET /status/{execution_id}",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Check If Status == completed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://api:8000/reports/{{ $node[\"Trigger FastAPI /process (HTTP 202)\"].json.execution_id }}",
+        "options": {}
+      },
+      "name": "Fetch Reconciliation Report (GET /reports/{id})",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1500,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (24h)": {
+      "main": [
+        [
+          {
+            "node": "Trigger FastAPI /process (HTTP 202)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger FastAPI /process (HTTP 202)": {
+      "main": [
+        [
+          {
+            "node": "Wait 2s for Celery Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2s for Celery Task": {
+      "main": [
+        [
+          {
+            "node": "Poll GET /status/{execution_id}",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll GET /status/{execution_id}": {
+      "main": [
+        [
+          {
+            "node": "Check If Status == completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Status == completed": {
+      "main": [
+        [
+          {
+            "node": "Fetch Reconciliation Report (GET /reports/{id})",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "stage-6-n8n-v1"
+}
