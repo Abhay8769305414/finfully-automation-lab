@@ -1,0 +1,5 @@
+invoice_id,customer_id,customer_name,product_id,product_name,quantity,unit_price,total_amount,invoice_date,status
+INV-1001,CUST-001,Acme Corp,PROD-101,Widget A,10,15.50,155.00,2026-01-15,PENDING
+INV-1002,CUST-002,Globex Inc,PROD-102,Gadget B,5,42.00,210.00,2026-01-16,PENDING
+INV-1003,CUST-003,Soylent Ltd,PROD-103,Thingamajig C,20,8.75,175.00,2026-01-17,PENDING
+INV-1004,CUST-004,Initech LLC,PROD-101,Widget A,2,15.50,31.00,2026-01-18,PENDING
